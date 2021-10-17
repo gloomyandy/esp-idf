@@ -2725,7 +2725,8 @@ void mdns_parse_packet(mdns_rx_packet_t * packet)
             bool unicast = !!(mdns_class & 0x8000);
             mdns_class &= 0x7FFF;
             content = content + 4;
-
+            // allow matching against "ANY"
+            if (mdns_class == 0xff) mdns_class = 1;
             if (mdns_class != 0x0001 || name->invalid) {//bad class or invalid name for this question entry
                 continue;
             }
