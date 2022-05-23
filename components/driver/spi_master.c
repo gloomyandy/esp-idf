@@ -479,6 +479,7 @@ static SPI_MASTER_ISR_ATTR void spi_setup_device(spi_device_t *dev)
         //if the configuration is already applied, skip the following.
         return;
     }
+    ets_printf("setting up device\n");
     spi_hal_context_t *hal = &dev->host->hal;
     spi_hal_dev_config_t *hal_dev = &(dev->hal_dev);
     spi_hal_setup_device(hal, hal_dev);
@@ -568,8 +569,10 @@ static void SPI_MASTER_ISR_ATTR spi_new_trans(spi_device_t *dev, spi_trans_priv_
 
     //Call pre-transmission callback, if any
     if (dev->cfg.pre_cb) dev->cfg.pre_cb(trans);
+#if 0
     //Kick off transfer
     spi_hal_user_start(hal);
+#endif
 }
 
 // The function is called when a transaction is done, in ISR or in the task.
@@ -923,9 +926,10 @@ esp_err_t SPI_MASTER_ISR_ATTR spi_device_polling_start(spi_device_handle_t handl
     SPI_CHECK(ticks_to_wait == portMAX_DELAY, "currently timeout is not available for polling transactions", ESP_ERR_INVALID_ARG);
 
     spi_host_t *host = handle->host;
+#if 0
     ret = check_trans_valid(handle, trans_desc);
     if (ret!=ESP_OK) return ret;
-
+#endif 
     SPI_CHECK(!spi_bus_device_is_polling(handle), "Cannot send polling transaction while the previous polling transaction is not terminated.", ESP_ERR_INVALID_STATE );
 
     if (host->device_acquiring_lock != handle) {
@@ -954,7 +958,7 @@ esp_err_t SPI_MASTER_ISR_ATTR spi_device_polling_end(spi_device_handle_t handle,
 
     assert(host->cur_cs == handle->id);
     assert(handle == get_acquiring_dev(host));
-
+#if 0
     TickType_t start = xTaskGetTickCount();
     while (!spi_hal_usr_is_done(&host->hal)) {
         TickType_t end = xTaskGetTickCount();
@@ -966,6 +970,7 @@ esp_err_t SPI_MASTER_ISR_ATTR spi_device_polling_end(spi_device_handle_t handle,
     ESP_LOGV(SPI_TAG, "polling trans done");
     //deal with the in-flight transaction
     spi_post_trans(host);
+#endif
     //release temporary buffers
     uninstall_priv_desc(&host->cur_trans_buf);
 

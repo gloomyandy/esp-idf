@@ -17,6 +17,10 @@
 
 #include "hal/spi_hal.h"
 #include "soc/soc_caps.h"
+#include "driver/spi_common_internal.h"
+#include "driver/spi_master.h"
+#include "esp_log.h"
+#include "freertos/task.h"
 
 //This GDMA related part will be introduced by GDMA dedicated APIs in the future. Here we temporarily use macros.
 #if SOC_GDMA_SUPPORTED
@@ -64,9 +68,12 @@ void spi_hal_setup_trans(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev
     //clear int bit
     spi_ll_clear_int_stat(hal->hw);
     //We should be done with the transmission.
-    assert(spi_ll_get_running_cmd(hw) == 0);
+    if (spi_ll_get_running_cmd(hw) != 0) ets_printf("cmd is %x\n", spi_ll_get_running_cmd(hw));
+
+    //assert(spi_ll_get_running_cmd(hw) == 0);
 
     spi_ll_master_set_io_mode(hw, trans->io_mode);
+    if (spi_ll_get_running_cmd(hw) != 0) ets_printf("cmd1 is %x\n", spi_ll_get_running_cmd(hw));
 
     int extra_dummy = 0;
     //when no_dummy is not set and in half-duplex mode, sets the dummy bit if RX phase exist
@@ -77,6 +84,7 @@ void spi_hal_setup_trans(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev
     //SPI iface needs to be configured for a delay in some cases.
     //configure dummy bits
     spi_ll_set_dummy(hw, extra_dummy + trans->dummy_bits);
+    if (spi_ll_get_running_cmd(hw) != 0) ets_printf("cmd2 is %x\n", spi_ll_get_running_cmd(hw));
 
     uint32_t miso_delay_num = 0;
     uint32_t miso_delay_mode = 0;
@@ -102,8 +110,12 @@ void spi_hal_setup_trans(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev
         miso_delay_num = extra_dummy ? dev->timing_conf.timing_miso_delay : 0;
         miso_delay_mode = 0;
     }
+    //ets_printf("delay mode %d delay num %d\n", miso_delay_mode, miso_delay_num);
+    miso_delay_mode = 0;
     spi_ll_set_miso_delay(hw, miso_delay_mode, miso_delay_num);
+if (spi_ll_get_running_cmd(hw) != 0) ets_printf("cmd3 is %x\n", spi_ll_get_running_cmd(hw));
 
+#if 0
     spi_ll_set_mosi_bitlen(hw, trans->tx_bitlen);
 
     if (dev->half_duplex) {
@@ -112,7 +124,7 @@ void spi_hal_setup_trans(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev
         //rxlength is not used in full-duplex mode
         spi_ll_set_miso_bitlen(hw, trans->tx_bitlen);
     }
-
+#endif
     //Configure bit sizes, load addr and command
     int cmdlen = trans->cmd_bits;
     int addrlen = trans->addr_bits;
@@ -129,6 +141,7 @@ void spi_hal_setup_trans(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev
 
     spi_ll_set_command(hw, trans->cmd, cmdlen, dev->tx_lsbfirst);
     spi_ll_set_address(hw, trans->addr, addrlen, dev->tx_lsbfirst);
+if (spi_ll_get_running_cmd(hw) != 0) ets_printf("cmd4 is %x\n", spi_ll_get_running_cmd(hw));
 
     //Save the transaction attributes for internal usage.
     memcpy(&hal->trans_config, trans, sizeof(spi_hal_trans_config_t));
@@ -137,6 +150,7 @@ void spi_hal_setup_trans(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev
 void spi_hal_prepare_data(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev, const spi_hal_trans_config_t *trans)
 {
     spi_dev_t *hw = hal->hw;
+if (spi_ll_get_running_cmd(hw) != 0) ets_printf("cmd5 is %x\n", spi_ll_get_running_cmd(hw));
 
     //Fill DMA descriptors
     if (trans->rcv_buffer) {
@@ -164,8 +178,10 @@ void spi_hal_prepare_data(spi_hal_context_t *hal, const spi_hal_dev_config_t *de
 
     if (trans->send_buffer) {
         if (!hal->dma_enabled) {
+#if 0
             //Need to copy data to registers manually
             spi_ll_write_buffer(hw, trans->send_buffer, trans->tx_bitlen);
+#endif
         } else {
             lldesc_setup_link(hal->dmadesc_tx, trans->send_buffer, (trans->tx_bitlen + 7) / 8, false);
 
@@ -175,6 +191,7 @@ void spi_hal_prepare_data(spi_hal_context_t *hal, const spi_hal_dev_config_t *de
             spi_dma_ll_tx_start(hal->dma_out, hal->tx_dma_chan, hal->dmadesc_tx);
         }
     }
+if (spi_ll_get_running_cmd(hw) != 0) ets_printf("cmd6 is %x\n", spi_ll_get_running_cmd(hw));
 
     //in ESP32 these registers should be configured after the DMA is set
     if ((!dev->half_duplex && trans->rcv_buffer) || trans->send_buffer) {
@@ -183,6 +200,10 @@ void spi_hal_prepare_data(spi_hal_context_t *hal, const spi_hal_dev_config_t *de
         spi_ll_enable_mosi(hw, 0);
     }
     spi_ll_enable_miso(hw, (trans->rcv_buffer) ? 1 : 0);
+if (spi_ll_get_running_cmd(hw) != 0) ets_printf("cmd7 is %x\n", spi_ll_get_running_cmd(hw));
+
+    // do the transfer
+    spi_hal_transfer_data(hal, dev, trans);
 }
 
 void spi_hal_user_start(const spi_hal_context_t *hal)
@@ -204,3 +225,61 @@ void spi_hal_fetch_result(const spi_hal_context_t *hal)
         spi_ll_read_buffer(hal->hw, trans->rcv_buffer, trans->rx_bitlen);
     }
 }
+
+void spi_hal_transfer_data(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev, const spi_hal_trans_config_t *trans)
+{
+    spi_dev_t *hw = hal->hw;
+    uint32_t length = trans->tx_bitlen;
+    uint32_t offset = 0;
+if (spi_ll_get_running_cmd(hw)) ets_printf("Before transfer cmd %x length %d offset %d done %d\n", spi_ll_get_running_cmd(hw), length, offset, spi_hal_usr_is_done(hal));
+//ets_printf("Transfer length %d\n", length);
+    while (length > 0)
+    {
+        uint32_t tlen = length > 64*8 ? 64*8 : length;
+    spi_ll_clear_int_stat(hw);
+    //spi_ll_master_set_io_mode(hw, trans->io_mode);
+    //spi_ll_set_dummy(hw, 0);
+
+        spi_ll_set_mosi_bitlen(hw, tlen);
+
+        if (dev->half_duplex) {
+            spi_ll_set_miso_bitlen(hw, tlen);
+        } else {
+            //rxlength is not used in full-duplex mode
+            spi_ll_set_miso_bitlen(hw, tlen);
+        }
+        if (trans->send_buffer) {
+            //Need to copy data to registers manually
+            //spi_ll_write_buffer(hw, trans->send_buffer + offset, tlen);
+            memcpy(hw->data_buf, trans->send_buffer + offset, tlen/8);
+
+        }
+    //spi_ll_set_addr_bitlen(hw, 0);
+    //spi_ll_set_command_bitlen(hw, 0);
+
+    //spi_ll_set_command(hw, trans->cmd, 0, dev->tx_lsbfirst);
+    //spi_ll_set_address(hw, trans->addr, 0, dev->tx_lsbfirst);
+        spi_hal_user_start(hal);
+//if (spi_ll_get_running_cmd(hw)) ets_printf("After start cmd %x tlen %d length %d offset %d done %d\n", spi_ll_get_running_cmd(hw), tlen, length, offset, spi_hal_usr_is_done(hal));
+        TickType_t start = xTaskGetTickCount();
+        while (!spi_hal_usr_is_done(hal)) {
+            TickType_t end = xTaskGetTickCount();
+            if (end - start > 100000) {
+                //ESP_LOGE("spi transfer", "polling timeout");
+                ets_printf("Transfer timeout\n");
+                break;
+            }
+        }
+//if (spi_ll_get_running_cmd(hw)) ets_printf("After wait cmd %x tlen %d length %d offset %d done %d\n", spi_ll_get_running_cmd(hw), tlen, length, offset, spi_hal_usr_is_done(hal));
+        //ESP_LOGV(SPI_TAG, "polling trans done");
+        if (trans->rcv_buffer) {
+            //Need to copy from SPI regs to result buffer.
+            //spi_ll_read_buffer(hal->hw, trans->rcv_buffer + offset, tlen);
+            memcpy(trans->rcv_buffer + offset, hw->data_buf, tlen/8);
+        }
+        length -= tlen;
+        offset += tlen/8;
+    }
+if (spi_ll_get_running_cmd(hw)) ets_printf("After transfer cmd %x length %d done %d\n", spi_ll_get_running_cmd(hw), trans->tx_bitlen, spi_hal_usr_is_done(hal));
+}
+
