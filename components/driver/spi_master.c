@@ -569,10 +569,14 @@ static void SPI_MASTER_ISR_ATTR spi_new_trans(spi_device_t *dev, spi_trans_priv_
 
     //Call pre-transmission callback, if any
     if (dev->cfg.pre_cb) dev->cfg.pre_cb(trans);
-#if 0
-    //Kick off transfer
-    spi_hal_user_start(hal);
-#endif
+
+    // do the transfer
+    if (!host->polling)
+        spi_hal_user_start(hal);
+    else if (hal->dma_enabled)
+        spi_hal_transfer_data_dma(hal, hal_dev, &hal_trans);
+    else
+        spi_hal_transfer_data(hal, hal_dev, &hal_trans);
 }
 
 // The function is called when a transaction is done, in ISR or in the task.
@@ -581,7 +585,8 @@ static void SPI_MASTER_ISR_ATTR spi_post_trans(spi_host_t *host)
 {
     spi_transaction_t *cur_trans = host->cur_trans_buf.trans;
 
-    spi_hal_fetch_result(&host->hal);
+    if (!host->polling)
+        spi_hal_fetch_result(&host->hal);
     //Call post-transaction callback, if any
     spi_device_t* dev = host->device[host->cur_cs];
     if (dev->cfg.post_cb) dev->cfg.post_cb(cur_trans);
@@ -926,10 +931,9 @@ esp_err_t SPI_MASTER_ISR_ATTR spi_device_polling_start(spi_device_handle_t handl
     SPI_CHECK(ticks_to_wait == portMAX_DELAY, "currently timeout is not available for polling transactions", ESP_ERR_INVALID_ARG);
 
     spi_host_t *host = handle->host;
-#if 0
     ret = check_trans_valid(handle, trans_desc);
     if (ret!=ESP_OK) return ret;
-#endif 
+
     SPI_CHECK(!spi_bus_device_is_polling(handle), "Cannot send polling transaction while the previous polling transaction is not terminated.", ESP_ERR_INVALID_STATE );
 
     if (host->device_acquiring_lock != handle) {
@@ -958,6 +962,7 @@ esp_err_t SPI_MASTER_ISR_ATTR spi_device_polling_end(spi_device_handle_t handle,
 
     assert(host->cur_cs == handle->id);
     assert(handle == get_acquiring_dev(host));
+    // To allow for large non dma requests we do this in the transfer loop
 #if 0
     TickType_t start = xTaskGetTickCount();
     while (!spi_hal_usr_is_done(&host->hal)) {
@@ -969,8 +974,8 @@ esp_err_t SPI_MASTER_ISR_ATTR spi_device_polling_end(spi_device_handle_t handle,
 
     ESP_LOGV(SPI_TAG, "polling trans done");
     //deal with the in-flight transaction
-    spi_post_trans(host);
 #endif
+    spi_post_trans(host);
     //release temporary buffers
     uninstall_priv_desc(&host->cur_trans_buf);
 

@@ -198,7 +198,23 @@ void spi_hal_setup_trans(spi_hal_context_t *hal, const spi_hal_dev_config_t *hal
  */
 void spi_hal_prepare_data(spi_hal_context_t *hal, const spi_hal_dev_config_t *hal_dev, const spi_hal_trans_config_t *hal_trans);
 
-void spi_hal_transfer_data(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev, const spi_hal_trans_config_t *trans);
+/**
+ * Perform data transfer for the current transaction using polling.
+ *
+ * @param hal            Context of the HAL layer.
+ * @param hal_dev        Device configuration
+ * @param hal_trans      Transaction configuration
+ */
+void spi_hal_transfer_data(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev, spi_hal_trans_config_t *trans);
+
+/**
+ * Perform data transfer for the current transaction using dma.
+ *
+ * @param hal            Context of the HAL layer.
+ * @param hal_dev        Device configuration
+ * @param hal_trans      Transaction configuration
+ */
+void spi_hal_transfer_data_dma(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev, const spi_hal_trans_config_t *trans);
 
 /**
  * Trigger start a user-defined transaction.

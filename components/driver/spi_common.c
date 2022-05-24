@@ -675,7 +675,7 @@ esp_err_t spi_bus_initialize(spi_host_device_t host_id, const spi_bus_config_t *
         bus_attr->dma_desc_num = dma_desc_ct;
     } else {
         bus_attr->dma_enabled = 0;
-        bus_attr->max_transfer_sz = SOC_SPI_MAXIMUM_BUFFER_SIZE;
+        bus_attr->max_transfer_sz = 8192;
         bus_attr->dma_desc_num = 0;
     }
 
