@@ -28,9 +28,6 @@
 // Purpose of this module is to implement minimal loopback netif to facilitate
 //   low level driver testing
 //
-
-#define ESP_NETIF_HOSTNAME_MAX_SIZE    32
-
 static const char *TAG = "esp_netif_loopback";
 
 static bool s_netif_initialized = false;

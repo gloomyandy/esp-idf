@@ -37,4 +37,11 @@ menu "ESP NETIF Adapter"
             Backward compatible interface to tcpip_adapter is enabled by default to support
             legacy TCP/IP stack initialisation code. Disable this option to use only esp-netif
             interface.
+
+    config ESP_NETIF_HOSTNAME_MAX_LENGTH
+        int "Max hostname length"
+        range 1 253
+        default 32
+        help
+            Maximum number of characters in the local hostname
 endmenu
