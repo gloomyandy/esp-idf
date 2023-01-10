@@ -59,7 +59,6 @@
 // This is the main module implementing lwip interaction with esp-netif
 //
 
-#define ESP_NETIF_HOSTNAME_MAX_SIZE    32
 
 #define DHCP_CB_CHANGE (LWIP_NSC_IPV4_SETTINGS_CHANGED | LWIP_NSC_IPV4_ADDRESS_CHANGED | LWIP_NSC_IPV4_GATEWAY_CHANGED | LWIP_NSC_IPV4_NETMASK_CHANGED)
 
@@ -1672,7 +1671,7 @@ static esp_err_t esp_netif_set_hostname_api(esp_netif_api_msg_t *msg)
 
     struct netif *p_netif = esp_netif->lwip_netif;
 
-    if (strlen(hostname) > ESP_NETIF_HOSTNAME_MAX_SIZE) {
+    if (strlen(hostname) > CONFIG_ESP_NETIF_HOSTNAME_MAX_LENGTH) {
         return ESP_ERR_ESP_NETIF_INVALID_PARAMS;
     }
 
