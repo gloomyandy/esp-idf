@@ -39,6 +39,8 @@
 #include "soc/lldesc.h"
 #include "soc/soc_caps.h"
 #include "hal/spi_types.h"
+// Support the use of large transfers without DMA
+#define SUPPORT_LARGE_TRANSFER 1
 
 /**
  * Input parameters to the ``spi_hal_cal_clock_conf`` to calculate the timing configuration
@@ -199,6 +201,26 @@ void spi_hal_setup_trans(spi_hal_context_t *hal, const spi_hal_dev_config_t *hal
  * @param hal_trans      Transaction configuration
  */
 void spi_hal_prepare_data(spi_hal_context_t *hal, const spi_hal_dev_config_t *hal_dev, const spi_hal_trans_config_t *hal_trans);
+
+#if SUPPORT_LARGE_TRANSFER
+/**
+ * Perform data transfer for the current transaction using polling.
+ *
+ * @param hal            Context of the HAL layer.
+ * @param hal_dev        Device configuration
+ * @param hal_trans      Transaction configuration
+ */
+void spi_hal_transfer_data(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev, spi_hal_trans_config_t *trans);
+
+/**
+ * Perform data transfer for the current transaction using dma.
+ *
+ * @param hal            Context of the HAL layer.
+ * @param hal_dev        Device configuration
+ * @param hal_trans      Transaction configuration
+ */
+void spi_hal_transfer_data_dma(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev, const spi_hal_trans_config_t *trans);
+#endif
 
 /**
  * Trigger start a user-defined transaction.

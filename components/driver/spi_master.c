@@ -563,8 +563,18 @@ static void SPI_MASTER_ISR_ATTR spi_new_trans(spi_device_t *dev, spi_trans_priv_
 
     //Call pre-transmission callback, if any
     if (dev->cfg.pre_cb) dev->cfg.pre_cb(trans);
+#if SUPPORT_LARGE_TRANSFER
+    // do the transfer
+    if (!host->polling)
+        spi_hal_user_start(hal);
+    else if (hal->dma_enabled)
+        spi_hal_transfer_data_dma(hal, hal_dev, &hal_trans);
+    else
+        spi_hal_transfer_data(hal, hal_dev, &hal_trans);
+#else
     //Kick off transfer
     spi_hal_user_start(hal);
+#endif
 }
 
 // The function is called when a transaction is done, in ISR or in the task.
@@ -573,6 +583,9 @@ static void SPI_MASTER_ISR_ATTR spi_post_trans(spi_host_t *host)
 {
     spi_transaction_t *cur_trans = host->cur_trans_buf.trans;
 
+#if SUPPORT_LARGE_TRANSFER
+    if (!host->polling)
+#endif
     spi_hal_fetch_result(&host->hal);
     //Call post-transaction callback, if any
     spi_device_t* dev = host->device[host->cur_cs];
@@ -686,8 +699,10 @@ static SPI_MASTER_ISR_ATTR esp_err_t check_trans_valid(spi_device_handle_t handl
     //check transmission length
     SPI_CHECK((trans_desc->flags & SPI_TRANS_USE_RXDATA)==0 || trans_desc->rxlength <= 32, "SPI_TRANS_USE_RXDATA only available for rxdata transfer <= 32 bits", ESP_ERR_INVALID_ARG);
     SPI_CHECK((trans_desc->flags & SPI_TRANS_USE_TXDATA)==0 || trans_desc->length <= 32, "SPI_TRANS_USE_TXDATA only available for txdata transfer <= 32 bits", ESP_ERR_INVALID_ARG);
+#if !SUPPORT_LARGE_TRANSFER
     SPI_CHECK(trans_desc->length <= bus_attr->max_transfer_sz*8, "txdata transfer > host maximum", ESP_ERR_INVALID_ARG);
     SPI_CHECK(trans_desc->rxlength <= bus_attr->max_transfer_sz*8, "rxdata transfer > host maximum", ESP_ERR_INVALID_ARG);
+#endif
     SPI_CHECK(is_half_duplex || trans_desc->rxlength <= trans_desc->length, "rx length > tx length in full duplex mode", ESP_ERR_INVALID_ARG);
     //check working mode
 #if SOC_SPI_SUPPORT_OCT
@@ -968,6 +983,7 @@ esp_err_t SPI_MASTER_ISR_ATTR spi_device_polling_end(spi_device_handle_t handle,
     assert(host->cur_cs == handle->id);
     assert(handle == get_acquiring_dev(host));
 
+#if !SUPPORT_LARGE_TRANSFER
     TickType_t start = xTaskGetTickCount();
     while (!spi_hal_usr_is_done(&host->hal)) {
         TickType_t end = xTaskGetTickCount();
@@ -975,7 +991,7 @@ esp_err_t SPI_MASTER_ISR_ATTR spi_device_polling_end(spi_device_handle_t handle,
             return ESP_ERR_TIMEOUT;
         }
     }
-
+#endif
     ESP_LOGV(SPI_TAG, "polling trans done");
     //deal with the in-flight transaction
     spi_post_trans(host);

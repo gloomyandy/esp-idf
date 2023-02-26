@@ -18,6 +18,12 @@
 #include "hal/spi_hal.h"
 #include "hal/assert.h"
 #include "soc/soc_caps.h"
+#if SUPPORT_LARGE_TRANSFER
+#include "driver/spi_common_internal.h"
+#include "driver/spi_master.h"
+#include "esp_log.h"
+#include "freertos/task.h"
+#endif
 
 //This GDMA related part will be introduced by GDMA dedicated APIs in the future. Here we temporarily use macros.
 #if SOC_GDMA_SUPPORTED
@@ -105,6 +111,10 @@ void spi_hal_setup_trans(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev
     }
     spi_ll_set_miso_delay(hw, miso_delay_mode, miso_delay_num);
 
+#if SUPPORT_LARGE_TRANSFER
+    // To allow polling mode to handle large buffers we set these later when not using dma
+    if (hal->dma_enabled) {
+#endif
     spi_ll_set_mosi_bitlen(hw, trans->tx_bitlen);
 
     if (dev->half_duplex) {
@@ -113,6 +123,10 @@ void spi_hal_setup_trans(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev
         //rxlength is not used in full-duplex mode
         spi_ll_set_miso_bitlen(hw, trans->tx_bitlen);
     }
+#if SUPPORT_LARGE_TRANSFER
+    // To allow polling mode to handle large buffers we set these later when not using dma
+    }
+#endif
 
     //Configure bit sizes, load addr and command
     int cmdlen = trans->cmd_bits;
@@ -169,8 +183,11 @@ void spi_hal_prepare_data(spi_hal_context_t *hal, const spi_hal_dev_config_t *de
 
     if (trans->send_buffer) {
         if (!hal->dma_enabled) {
+#if !SUPPORT_LARGE_TRANSFER
+            //For large transfers we do this in the transfer loop
             //Need to copy data to registers manually
             spi_ll_write_buffer(hw, trans->send_buffer, trans->tx_bitlen);
+#endif
         } else {
             lldesc_setup_link(hal->dmadesc_tx, trans->send_buffer, (trans->tx_bitlen + 7) / 8, false);
 
@@ -210,3 +227,60 @@ void spi_hal_fetch_result(const spi_hal_context_t *hal)
         spi_ll_read_buffer(hal->hw, trans->rcv_buffer, trans->rx_bitlen);
     }
 }
+
+#if SUPPORT_LARGE_TRANSFER
+void spi_hal_transfer_data_dma(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev, const spi_hal_trans_config_t *trans)
+{
+    spi_hal_user_start(hal);
+    TickType_t start = xTaskGetTickCount();
+    while (!spi_hal_usr_is_done(hal)) {
+        TickType_t end = xTaskGetTickCount();
+        if (end - start > 100000) {
+            ESP_LOGE("spi transfer", "polling timeout");
+            break;
+        }
+    }
+}
+
+void spi_hal_transfer_data(spi_hal_context_t *hal, const spi_hal_dev_config_t *dev, spi_hal_trans_config_t *trans)
+{
+    spi_dev_t *hw = hal->hw;
+    uint32_t length = trans->tx_bitlen;
+    uint32_t offset = 0;
+
+    while (length > 0)
+    {
+        uint32_t tlen = length > 64*8 ? 64*8 : length;
+        spi_ll_clear_int_stat(hw);
+
+        spi_ll_set_mosi_bitlen(hw, tlen);
+
+        if (dev->half_duplex) {
+            spi_ll_set_miso_bitlen(hw, tlen);
+        } else {
+            //rxlength is not used in full-duplex mode
+            spi_ll_set_miso_bitlen(hw, tlen);
+        }
+        if (trans->send_buffer) {
+            //Need to copy data to registers manually
+            //spi_ll_write_buffer(hw, trans->send_buffer + offset, tlen);
+            memcpy((void *__restrict) hw->data_buf, (const void *__restrict) (trans->send_buffer + offset), tlen/8);
+        }
+        spi_hal_user_start(hal);
+        TickType_t start = xTaskGetTickCount();
+        while (!spi_hal_usr_is_done(hal)) {
+            TickType_t end = xTaskGetTickCount();
+            if (end - start > 100000) {
+                ESP_LOGE("spi transfer", "polling timeout");
+                break;
+            }
+        }
+        if (trans->rcv_buffer) {
+            //Need to copy from SPI regs to result buffer.
+            memcpy((void *__restrict)(trans->rcv_buffer + offset), (const void *__restrict)hw->data_buf, tlen/8);
+        }
+        length -= tlen;
+        offset += tlen/8;
+    }
+}
+#endif
