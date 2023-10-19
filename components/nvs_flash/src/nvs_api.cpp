@@ -13,6 +13,7 @@
 #include "esp_partition.h"
 #include <functional>
 #include "nvs_handle_simple.hpp"
+#include "nvs_memory_management.hpp"
 #include "esp_err.h"
 #include <esp_rom_crc.h>
 #include "nvs_internal.h"
@@ -22,7 +23,7 @@
 #include "esp_log.h"
 static const char* TAG = "nvs";
 
-class NVSHandleEntry : public intrusive_list_node<NVSHandleEntry> {
+class NVSHandleEntry : public intrusive_list_node<NVSHandleEntry>, public ExceptionlessAllocatable {
 public:
     NVSHandleEntry(nvs::NVSHandleSimple *handle, const char* part_name)
         : nvs_handle(handle),
@@ -106,7 +107,7 @@ extern "C" esp_err_t nvs_flash_init_partition_ptr(const esp_partition_t *partiti
     }
 
     esp_err_t init_res = NVSPartitionManager::get_instance()->init_custom(part,
-            partition->address / SPI_FLASH_SEC_SIZE,
+            0,
             partition->size / SPI_FLASH_SEC_SIZE);
 
     if (init_res != ESP_OK) {

@@ -301,6 +301,7 @@ class IperfTestUtility(object):
                     process = subprocess.Popen(['iperf', '-s', '-B', self.pc_nic_ip,
                                                 '-t', str(TEST_TIME), '-i', '1', '-f', 'm'],
                                                stdout=f, stderr=f)
+                    time.sleep(1)
                     if bw_limit > 0:
                         self.dut.write('iperf -c {} -i 1 -t {} -b {}'.format(self.pc_nic_ip, TEST_TIME, bw_limit))
                     else:
@@ -329,7 +330,7 @@ class IperfTestUtility(object):
                     self.dut.write('iperf -s -i 1 -t {}'.format(TEST_TIME))
                     # wait until DUT TCP server created
                     try:
-                        self.dut.expect('iperf tcp server create successfully', timeout=1)
+                        self.dut.expect('iperf: Socket created', timeout=5)
                     except DUT.ExpectTimeout:
                         # compatible with old iperf example binary
                         Utility.console_log('create iperf tcp server fail')
@@ -349,7 +350,7 @@ class IperfTestUtility(object):
                     self.dut.write('iperf -s -u -i 1 -t {}'.format(TEST_TIME))
                     # wait until DUT TCP server created
                     try:
-                        self.dut.expect('iperf udp server create successfully', timeout=1)
+                        self.dut.expect('iperf: Socket bound', timeout=5)
                     except DUT.ExpectTimeout:
                         # compatible with old iperf example binary
                         Utility.console_log('create iperf udp server fail')

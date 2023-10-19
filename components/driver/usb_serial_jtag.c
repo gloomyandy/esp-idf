@@ -16,6 +16,7 @@
 #include <stdbool.h>
 #include "esp_log.h"
 #include "hal/usb_serial_jtag_ll.h"
+#include "hal/usb_phy_ll.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/ringbuf.h"
@@ -120,6 +121,9 @@ esp_err_t usb_serial_jtag_driver_install(usb_serial_jtag_driver_config_t *usb_se
         goto _exit;
     }
 
+    // Configure PHY
+    usb_phy_ll_int_jtag_enable(&USB_SERIAL_JTAG);
+
     usb_serial_jtag_ll_clr_intsts_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY|
                                          USB_SERIAL_JTAG_INTR_SERIAL_OUT_RECV_PKT);
     usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY|
@@ -167,10 +171,10 @@ int usb_serial_jtag_write_bytes(const void* src, size_t size, TickType_t ticks_t
 
     const uint8_t *buff = (const uint8_t *)src;
     // Blocking method, Sending data to ringbuffer, and handle the data in ISR.
-    xRingbufferSend(p_usb_serial_jtag_obj->tx_ring_buf, (void*) (buff), size, ticks_to_wait);
+    BaseType_t result = xRingbufferSend(p_usb_serial_jtag_obj->tx_ring_buf, (void*) (buff), size, ticks_to_wait);
     // Now trigger the ISR to read data from the ring buffer.
     usb_serial_jtag_ll_ena_intr_mask(USB_SERIAL_JTAG_INTR_SERIAL_IN_EMPTY);
-    return size;
+    return (result == pdFALSE) ? 0 : size;
 }
 
 esp_err_t usb_serial_jtag_driver_uninstall(void)

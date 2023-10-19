@@ -20,6 +20,8 @@
 #include "hal/wdt_hal.h"
 #include "hal/uart_types.h"
 #include "hal/uart_ll.h"
+#include "hal/efuse_ll.h"
+#include "hal/efuse_hal.h"
 
 #include "esp_system.h"
 #include "esp_log.h"
@@ -54,6 +56,7 @@
 
 #include "brownout.h"
 
+#include "esp_rom_caps.h"
 #include "esp_rom_sys.h"
 
 // [refactor-todo] make this file completely target-independent
@@ -293,6 +296,20 @@ static void do_core_init(void)
     _GLOBAL_REENT->_stdin  = fopen(default_stdio_dev, "r");
     _GLOBAL_REENT->_stdout = fopen(default_stdio_dev, "w");
     _GLOBAL_REENT->_stderr = fopen(default_stdio_dev, "w");
+#if ESP_ROM_NEEDS_SWSETUP_WORKAROUND
+    /*
+    - This workaround for printf functions using 32-bit time_t after the 64-bit time_t upgrade
+    - The 32-bit time_t usage is triggered through ROM Newlib functions printf related functions calling __swsetup_r() on
+      the first call to a particular file pointer (i.e., stdin, stdout, stderr)
+    - Thus, we call the toolchain version of __swsetup_r() now (before any printf calls are made) to setup all of the
+      file pointers. Thus, the ROM newlib code will never call the ROM version of __swsetup_r().
+    - See IDFGH-7728 for more details
+    */
+    extern int __swsetup_r(struct _reent *, FILE *);
+    __swsetup_r(_GLOBAL_REENT, _GLOBAL_REENT->_stdout);
+    __swsetup_r(_GLOBAL_REENT, _GLOBAL_REENT->_stderr);
+    __swsetup_r(_GLOBAL_REENT, _GLOBAL_REENT->_stdin);
+#endif // ESP_ROM_NEEDS_SWSETUP_WORKAROUND
 #else // defined(CONFIG_VFS_SUPPORT_IO) && !defined(CONFIG_ESP_CONSOLE_NONE)
     _REENT_SMALL_CHECK_INIT(_GLOBAL_REENT);
 #endif // defined(CONFIG_VFS_SUPPORT_IO) && !defined(CONFIG_ESP_CONSOLE_NONE)
@@ -412,6 +429,12 @@ static void start_cpu0_default(void)
         esp_ota_get_app_elf_sha256(buf, sizeof(buf));
         ESP_EARLY_LOGI(TAG, "ELF file SHA256:  %s...", buf);
         ESP_EARLY_LOGI(TAG, "ESP-IDF:          %s", app_desc->idf_ver);
+
+        ESP_EARLY_LOGI(TAG, "Min chip rev:     v%d.%d", CONFIG_ESP_REV_MIN_FULL / 100, CONFIG_ESP_REV_MIN_FULL % 100);
+        ESP_EARLY_LOGI(TAG, "Max chip rev:     v%d.%d %s",CONFIG_ESP_REV_MAX_FULL / 100, CONFIG_ESP_REV_MAX_FULL % 100,
+                       efuse_ll_get_disable_wafer_version_major() ? "(constraint ignored)" : "");
+        unsigned revision = efuse_hal_chip_revision();
+        ESP_EARLY_LOGI(TAG, "Chip rev:         v%d.%d", revision / 100, revision % 100);
     }
 
     // Initialize core components and services.
@@ -444,7 +467,7 @@ IRAM_ATTR ESP_SYSTEM_INIT_FN(init_components0, BIT(0))
 {
     esp_timer_init();
 
-#if CONFIG_ESP_SLEEP_GPIO_RESET_WORKAROUND && !CONFIG_PM_SLP_DISABLE_GPIO
+#if CONFIG_ESP_SLEEP_GPIO_RESET_WORKAROUND || CONFIG_PM_SLP_DISABLE_GPIO
     // Configure to isolate (disable the Input/Output/Pullup/Pulldown
     // function of the pin) all GPIO pins in sleep state
     esp_sleep_config_gpio_isolate();

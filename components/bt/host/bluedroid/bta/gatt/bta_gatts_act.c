@@ -908,6 +908,22 @@ void bta_gatts_listen(tBTA_GATTS_CB *p_cb, tBTA_GATTS_DATA *p_msg)
 
 /*******************************************************************************
 **
+** Function         bta_gatts_show_local_database
+**
+** Description      print loacl service database
+**
+** Returns          none.
+**
+*******************************************************************************/
+void bta_gatts_show_local_database (void)
+{
+    if (GATTS_ShowLocalDatabase()) {
+        APPL_TRACE_ERROR("%s failed", __func__);
+    }
+}
+
+/*******************************************************************************
+**
 ** Function         bta_gatts_request_cback
 **
 ** Description      GATTS attribute request callback.
@@ -1003,6 +1019,10 @@ static void bta_gatts_conn_cback (tGATT_IF gatt_if, BD_ADDR bda, UINT16 conn_id,
                 cb_data.conn.conn_params.interval = p_lcb->current_used_conn_interval;
                 cb_data.conn.conn_params.latency = p_lcb->current_used_conn_latency;
                 cb_data.conn.conn_params.timeout = p_lcb->current_used_conn_timeout;
+                #if (BLE_INCLUDED == TRUE)
+                cb_data.conn.ble_addr_type = p_lcb->ble_addr_type;
+                #endif
+                cb_data.conn.conn_handle = p_lcb->handle;
             }else {
                 APPL_TRACE_WARNING("%s not found connection parameters of the device ", __func__);
             }
