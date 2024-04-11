@@ -106,7 +106,10 @@ extern "C" esp_err_t nvs_flash_init_partition_ptr(const esp_partition_t *partiti
     }
 
     esp_err_t init_res = NVSPartitionManager::get_instance()->init_custom(part,
-            partition->address / SPI_FLASH_SEC_SIZE,
+    // gloomyandy RRF: I've changed the following line because it seems that wit it the address
+    // is applied twice. Passing zero seems to work fine.
+    //        partition->address / SPI_FLASH_SEC_SIZE,
+            0,
             partition->size / SPI_FLASH_SEC_SIZE);
 
     if (init_res != ESP_OK) {
