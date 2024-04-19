@@ -149,7 +149,7 @@ static char * _mdns_mangle_name(char* in) {
 static bool _mdns_service_match(const mdns_service_t * srv, const char * service, const char * proto,
                                 const char * hostname)
 {
-    if (!service || !proto) {
+    if (!service || !proto || !srv->hostname) {
         return false;
     }
     return !strcasecmp(srv->service, service) && !strcasecmp(srv->proto, proto) &&
@@ -4267,7 +4267,8 @@ static void _mdns_remap_self_service_hostname(const char * old_hostname, const c
     mdns_srv_item_t * service = _mdns_server->services;
 
     while (service) {
-        if (strcmp(service->service->hostname, old_hostname) == 0) {
+        if (service->service->hostname &&
+            strcmp(service->service->hostname, old_hostname) == 0) {
             free((char *)service->service->hostname);
             service->service->hostname = strdup(new_hostname);
         }
@@ -4353,7 +4354,7 @@ static void _mdns_execute_action(mdns_action_t * action)
         _mdns_server->hostname = action->data.hostname_set.hostname;
         _mdns_self_host.hostname = action->data.hostname_set.hostname;
         _mdns_restart_all_pcbs();
-        xTaskNotifyGive(action->data.hostname_set.calling_task);
+        xSemaphoreGive(_mdns_server->action_sema);
         break;
     case ACTION_INSTANCE_SET:
         _mdns_send_bye_all_pcbs_no_instance(false);
@@ -4807,6 +4808,13 @@ esp_err_t mdns_init(void)
         err = ESP_ERR_NO_MEM;
         goto free_lock;
     }
+
+    _mdns_server->action_sema = xSemaphoreCreateBinary();
+    if (!_mdns_server->action_sema) {
+        err = ESP_ERR_NO_MEM;
+        goto free_queue;
+    }
+
     if ((err = esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL)) != ESP_OK) {
         goto free_event_handlers;
     }
@@ -4854,6 +4862,8 @@ free_event_handlers:
 #if CONFIG_ETH_ENABLED
     esp_event_handler_unregister(ETH_EVENT, ESP_EVENT_ANY_ID, &event_handler);
 #endif
+    vSemaphoreDelete(_mdns_server->action_sema);
+free_queue:
     vQueueDelete(_mdns_server->action_queue);
 free_lock:
     vSemaphoreDelete(_mdns_server->lock);
@@ -4907,6 +4917,7 @@ void mdns_free(void)
         }
         free(h);
     }
+    vSemaphoreDelete(_mdns_server->action_sema);
     vSemaphoreDelete(_mdns_server->lock);
     free(_mdns_server);
     _mdns_server = NULL;
@@ -4933,13 +4944,12 @@ esp_err_t mdns_hostname_set(const char * hostname)
     }
     action->type = ACTION_HOSTNAME_SET;
     action->data.hostname_set.hostname = new_hostname;
-    action->data.hostname_set.calling_task = xTaskGetCurrentTaskHandle();
     if (xQueueSend(_mdns_server->action_queue, &action, (portTickType)0) != pdPASS) {
         free(new_hostname);
         free(action);
         return ESP_ERR_NO_MEM;
     }
-    xTaskNotifyWait(0, 0, NULL, portMAX_DELAY);
+    xSemaphoreTake(_mdns_server->action_sema, portMAX_DELAY);
     return ESP_OK;
 }
 
@@ -5043,7 +5053,7 @@ esp_err_t mdns_instance_name_set(const char * instance)
 esp_err_t mdns_service_add_for_host(const char * instance, const char * service, const char * proto, const char * hostname,
                                     uint16_t port, mdns_txt_item_t txt[], size_t num_items)
 {
-    if (!_mdns_server || _str_null_or_empty(service) || _str_null_or_empty(proto) || !port) {
+    if (!_mdns_server || _str_null_or_empty(service) || _str_null_or_empty(proto) || !port || !hostname) {
         return ESP_ERR_INVALID_ARG;
     }
 

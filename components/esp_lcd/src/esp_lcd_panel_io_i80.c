@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2021-2022 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2021-2023 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -53,6 +53,7 @@ static esp_err_t lcd_i80_bus_configure_gpio(esp_lcd_i80_bus_handle_t bus, const 
 static void lcd_i80_switch_devices(lcd_panel_io_i80_t *cur_device, lcd_panel_io_i80_t *next_device);
 static void lcd_start_transaction(esp_lcd_i80_bus_t *bus, lcd_i80_trans_descriptor_t *trans_desc);
 static void lcd_default_isr_handler(void *args);
+static esp_err_t panel_io_i80_register_event_callbacks(esp_lcd_panel_io_handle_t io, const esp_lcd_panel_io_callbacks_t *cbs, void *user_ctx);
 
 struct esp_lcd_i80_bus_t {
     int bus_id;            // Bus ID, index from 0
@@ -242,7 +243,7 @@ esp_err_t esp_lcd_new_panel_io_i80(esp_lcd_i80_bus_handle_t bus, const esp_lcd_p
     ESP_GOTO_ON_FALSE(!bus_exclusive, ESP_ERR_INVALID_STATE, err, TAG, "bus has been exclusively owned by device");
     // check if pixel clock setting is valid
     uint32_t pclk_prescale = bus->resolution_hz / io_config->pclk_hz;
-    ESP_GOTO_ON_FALSE(pclk_prescale > 0 && pclk_prescale <= LCD_LL_CLOCK_PRESCALE_MAX, ESP_ERR_NOT_SUPPORTED, err, TAG,
+    ESP_GOTO_ON_FALSE(pclk_prescale > 0 && pclk_prescale <= LCD_LL_PCLK_DIV_MAX, ESP_ERR_NOT_SUPPORTED, err, TAG,
                       "prescaler can't satisfy PCLK clock %u", io_config->pclk_hz);
     i80_device = heap_caps_calloc(1, sizeof(lcd_panel_io_i80_t) + io_config->trans_queue_depth * sizeof(lcd_i80_trans_descriptor_t), LCD_I80_MEM_ALLOC_CAPS);
     ESP_GOTO_ON_FALSE(i80_device, ESP_ERR_NO_MEM, err, TAG, "no mem for i80 panel io");
@@ -279,6 +280,7 @@ esp_err_t esp_lcd_new_panel_io_i80(esp_lcd_i80_bus_handle_t bus, const esp_lcd_p
     i80_device->base.del = panel_io_i80_del;
     i80_device->base.tx_param = panel_io_i80_tx_param;
     i80_device->base.tx_color = panel_io_i80_tx_color;
+    i80_device->base.register_event_callbacks = panel_io_i80_register_event_callbacks;
     // we only configure the CS GPIO as output, don't connect to the peripheral signal at the moment
     // we will connect the CS GPIO to peripheral signal when switching devices in lcd_i80_switch_devices()
     if (io_config->cs_gpio_num >= 0) {
@@ -320,10 +322,29 @@ static esp_err_t panel_io_i80_del(esp_lcd_panel_io_t *io)
     LIST_REMOVE(i80_device, device_list_entry);
     portEXIT_CRITICAL(&bus->spinlock);
 
+    // reset CS to normal GPIO
+    if (i80_device->cs_gpio_num >= 0) {
+        gpio_reset_pin(i80_device->cs_gpio_num);
+    }
+
     ESP_LOGD(TAG, "del i80 lcd panel io @%p", i80_device);
     vQueueDelete(i80_device->trans_queue);
     vQueueDelete(i80_device->done_queue);
     free(i80_device);
+    return ESP_OK;
+}
+
+static esp_err_t panel_io_i80_register_event_callbacks(esp_lcd_panel_io_handle_t io, const esp_lcd_panel_io_callbacks_t *cbs, void *user_ctx)
+{
+    lcd_panel_io_i80_t *i80_device = __containerof(io, lcd_panel_io_i80_t, base);
+
+    if(i80_device->on_color_trans_done != NULL) {
+        ESP_LOGW(TAG, "Callback on_color_trans_done was already set and now it was owerwritten!");
+    }
+
+    i80_device->on_color_trans_done = cbs->on_color_trans_done;
+    i80_device->user_ctx = user_ctx;
+
     return ESP_OK;
 }
 
@@ -466,7 +487,8 @@ static esp_err_t lcd_i80_select_periph_clock(esp_lcd_i80_bus_handle_t bus, lcd_c
 {
     esp_err_t ret = ESP_OK;
     // force to use integer division, as fractional division might lead to clock jitter
-    lcd_ll_set_group_clock_src(bus->hal.dev, clk_src, LCD_PERIPH_CLOCK_PRE_SCALE, 0, 0);
+    lcd_ll_select_clk_src(bus->hal.dev, clk_src);
+    lcd_ll_set_group_clock_coeff(bus->hal.dev, LCD_PERIPH_CLOCK_PRE_SCALE, 0, 0);
     switch (clk_src) {
     case LCD_CLK_SRC_PLL160M:
         bus->resolution_hz = 160000000 / LCD_PERIPH_CLOCK_PRE_SCALE;
@@ -560,9 +582,16 @@ static void lcd_periph_trigger_quick_trans_done_event(esp_lcd_i80_bus_handle_t b
 static void lcd_start_transaction(esp_lcd_i80_bus_t *bus, lcd_i80_trans_descriptor_t *trans_desc)
 {
     // by default, the dummy phase is disabled because it's not common for most LCDs
+    uint32_t dummy_cycles = 0;
+    uint32_t cmd_cycles = trans_desc->cmd_value >= 0 ? trans_desc->cmd_cycles : 0;
     // Number of data phase cycles are controlled by DMA buffer length, we only need to enable/disable the phase here
-    lcd_ll_set_phase_cycles(bus->hal.dev, trans_desc->cmd_cycles, 0, trans_desc->data ? 1 : 0);
-    lcd_ll_set_command(bus->hal.dev, bus->bus_width, trans_desc->cmd_value);
+    uint32_t data_cycles = trans_desc->data ? 1 : 0;
+    if (trans_desc->cmd_value >= 0) {
+        lcd_ll_set_command(bus->hal.dev, bus->bus_width, trans_desc->cmd_value);
+    }
+    lcd_ll_set_phase_cycles(bus->hal.dev, cmd_cycles, dummy_cycles, data_cycles);
+    lcd_ll_set_blank_cycles(bus->hal.dev, 1, 1);
+
     if (trans_desc->data) { // some specific LCD commands can have no parameters
         gdma_start(bus->dma_chan, (intptr_t)(bus->dma_nodes));
         // delay 1us is sufficient for DMA to pass data to LCD FIFO

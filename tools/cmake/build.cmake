@@ -222,6 +222,15 @@ function(__build_expand_requirements component_target)
 
     get_property(reqs TARGET ${component_target} PROPERTY REQUIRES)
     get_property(priv_reqs TARGET ${component_target} PROPERTY PRIV_REQUIRES)
+    __component_get_property(component_name ${component_target} COMPONENT_NAME)
+    __component_get_property(component_alias ${component_target} COMPONENT_ALIAS)
+    idf_build_get_property(common_reqs __COMPONENT_REQUIRES_COMMON)
+    list(APPEND reqs ${common_reqs})
+
+    if(reqs)
+        list(REMOVE_DUPLICATES reqs)
+        list(REMOVE_ITEM reqs ${component_alias} ${component_name})
+    endif()
 
     foreach(req ${reqs})
         __build_resolve_and_add_req(_component_target ${component_target} ${req} __REQUIRES)
@@ -429,10 +438,8 @@ macro(idf_build_process target)
         set(local_components_list_file ${build_dir}/local_components_list.temp.yml)
 
         set(__contents "components:\n")
-        idf_build_get_property(__component_targets __COMPONENT_TARGETS)
-        foreach(__component_target ${__component_targets})
-            __component_get_property(__component_name ${__component_target} COMPONENT_NAME)
-            __component_get_property(__component_dir ${__component_target} COMPONENT_DIR)
+        foreach(__component_name ${components})
+            idf_component_get_property(__component_dir ${__component_name} COMPONENT_DIR)
             set(__contents "${__contents}  - name: \"${__component_name}\"\n    path: \"${__component_dir}\"\n")
         endforeach()
 
@@ -440,10 +447,12 @@ macro(idf_build_process target)
 
         # Call for the component manager to prepare remote dependencies
         idf_build_get_property(python PYTHON)
+        idf_build_get_property(component_manager_interface_version __COMPONENT_MANAGER_INTERFACE_VERSION)
         execute_process(COMMAND ${python}
             "-m"
             "idf_component_manager.prepare_components"
             "--project_dir=${project_dir}"
+            "--interface_version=${component_manager_interface_version}"
             "prepare_dependencies"
             "--local_components_list_file=${local_components_list_file}"
             "--managed_components_list_file=${managed_components_list_file}"

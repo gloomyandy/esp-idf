@@ -19,6 +19,7 @@
 #include "esp_rom_gpio.h"
 #include "esp_rom_sys.h"
 #include "soc/clk_ctrl_os.h"
+#include "soc/soc_memory_types.h"
 
 static const char* LEDC_TAG = "ledc";
 
@@ -250,7 +251,6 @@ esp_err_t ledc_timer_rst(ledc_mode_t speed_mode, ledc_timer_t timer_sel)
     LEDC_CHECK(p_ledc_obj[speed_mode] != NULL, LEDC_NOT_INIT, ESP_ERR_INVALID_STATE);
     portENTER_CRITICAL(&ledc_spinlock);
     ledc_hal_timer_rst(&(p_ledc_obj[speed_mode]->ledc_hal), timer_sel);
-    ledc_ls_timer_update(speed_mode, timer_sel);
     portEXIT_CRITICAL(&ledc_spinlock);
     return ESP_OK;
 }
@@ -262,7 +262,6 @@ esp_err_t ledc_timer_pause(ledc_mode_t speed_mode, ledc_timer_t timer_sel)
     LEDC_CHECK(p_ledc_obj[speed_mode] != NULL, LEDC_NOT_INIT, ESP_ERR_INVALID_STATE);
     portENTER_CRITICAL(&ledc_spinlock);
     ledc_hal_timer_pause(&(p_ledc_obj[speed_mode]->ledc_hal), timer_sel);
-    ledc_ls_timer_update(speed_mode, timer_sel);
     portEXIT_CRITICAL(&ledc_spinlock);
     return ESP_OK;
 }
@@ -274,7 +273,6 @@ esp_err_t ledc_timer_resume(ledc_mode_t speed_mode, ledc_timer_t timer_sel)
     LEDC_CHECK(p_ledc_obj[speed_mode] != NULL, LEDC_NOT_INIT, ESP_ERR_INVALID_STATE);
     portENTER_CRITICAL(&ledc_spinlock);
     ledc_hal_timer_resume(&(p_ledc_obj[speed_mode]->ledc_hal), timer_sel);
-    ledc_ls_timer_update(speed_mode, timer_sel);
     portEXIT_CRITICAL(&ledc_spinlock);
     return ESP_OK;
 }
@@ -541,9 +539,6 @@ static esp_err_t ledc_set_timer_div(ledc_mode_t speed_mode, ledc_timer_t timer_n
 
     /* The divisor is correct, we can write in the hardware. */
     ledc_timer_set(speed_mode, timer_num, div_param, duty_resolution, timer_clk_src);
-
-    /* Reset the timer. */
-    ledc_timer_rst(speed_mode, timer_num);
     return ESP_OK;
 error:
     ESP_LOGE(LEDC_TAG, "requested frequency and duty resolution can not be achieved, try reducing freq_hz or duty_resolution. div_param=%d",
@@ -578,7 +573,12 @@ esp_err_t ledc_timer_config(const ledc_timer_config_t* timer_conf)
         ledc_hal_init(&(p_ledc_obj[speed_mode]->ledc_hal), speed_mode);
     }
 
-    return ledc_set_timer_div(speed_mode, timer_num, timer_conf->clk_cfg, freq_hz, duty_resolution);
+    esp_err_t ret = ledc_set_timer_div(speed_mode, timer_num, timer_conf->clk_cfg, freq_hz, duty_resolution);
+    if (ret == ESP_OK) {
+        /* Reset the timer. */
+        ledc_timer_rst(speed_mode, timer_num);
+    }
+    return ret;
 }
 
 esp_err_t ledc_set_pin(int gpio_num, ledc_mode_t speed_mode, ledc_channel_t ledc_channel)
@@ -1080,8 +1080,15 @@ esp_err_t ledc_cb_register(ledc_mode_t speed_mode, ledc_channel_t channel, ledc_
 {
     LEDC_ARG_CHECK(speed_mode < LEDC_SPEED_MODE_MAX, "speed_mode");
     LEDC_ARG_CHECK(channel < LEDC_CHANNEL_MAX, "channel");
+    LEDC_ARG_CHECK(cbs, "callback");
     LEDC_CHECK(p_ledc_obj[speed_mode] != NULL, LEDC_NOT_INIT, ESP_ERR_INVALID_STATE);
-    LEDC_CHECK(ledc_fade_channel_init_check(speed_mode, channel) == ESP_OK , LEDC_FADE_INIT_ERROR_STR, ESP_FAIL);
+    LEDC_CHECK(ledc_fade_channel_init_check(speed_mode, channel) == ESP_OK, LEDC_FADE_INIT_ERROR_STR, ESP_FAIL);
+    if (cbs->fade_cb && !esp_ptr_in_iram(cbs->fade_cb)) {
+        ESP_LOGW(LEDC_TAG, "fade callback not in IRAM");
+    }
+    if (user_arg && !esp_ptr_internal(user_arg)) {
+        ESP_LOGW(LEDC_TAG, "user context not in internal RAM");
+    }
     s_ledc_fade_rec[speed_mode][channel]->ledc_fade_callback = cbs->fade_cb;
     s_ledc_fade_rec[speed_mode][channel]->cb_user_arg = user_arg;
     return ESP_OK;
