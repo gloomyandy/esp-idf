@@ -49,9 +49,22 @@ extern "C" {
     };
 #endif
 
+#if 0
 #define ESP_NETIF_INHERENT_DEFAULT_ETH() \
     {   \
         .flags = (esp_netif_flags_t)(ESP_NETIF_DHCP_CLIENT | ESP_NETIF_FLAG_GARP | ESP_NETIF_FLAG_EVENT_IP_MODIFIED), \
+        ESP_COMPILER_DESIGNATED_INIT_AGGREGATE_TYPE_EMPTY(mac) \
+        ESP_COMPILER_DESIGNATED_INIT_AGGREGATE_TYPE_EMPTY(ip_info) \
+        .get_ip_event = IP_EVENT_ETH_GOT_IP, \
+        .lost_ip_event = IP_EVENT_ETH_LOST_IP, \
+        .if_key = "ETH_DEF", \
+        .if_desc = "eth", \
+        .route_prio = 50 \
+    };
+#endif
+#define ESP_NETIF_INHERENT_DEFAULT_ETH() \
+    {   \
+        .flags = (esp_netif_flags_t)(ESP_NETIF_FLAG_GARP | ESP_NETIF_FLAG_EVENT_IP_MODIFIED), \
         ESP_COMPILER_DESIGNATED_INIT_AGGREGATE_TYPE_EMPTY(mac) \
         ESP_COMPILER_DESIGNATED_INIT_AGGREGATE_TYPE_EMPTY(ip_info) \
         .get_ip_event = IP_EVENT_ETH_GOT_IP, \
