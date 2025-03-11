@@ -235,7 +235,6 @@ err:
 
 esp_err_t esp_eth_driver_uninstall(esp_eth_handle_t hdl)
 {
-    ESP_LOGD(TAG, "eth uninstall driver\n");
     esp_err_t ret = ESP_OK;
     esp_eth_driver_t *eth_driver = (esp_eth_driver_t *)hdl;
     ESP_GOTO_ON_FALSE(eth_driver, ESP_ERR_INVALID_ARG, err, TAG, "invalid argument");
@@ -249,11 +248,8 @@ esp_err_t esp_eth_driver_uninstall(esp_eth_handle_t hdl)
                       ESP_ERR_INVALID_STATE, err, TAG, "%d ethernet reference in use", expected_ref_count);
     esp_eth_mac_t *mac = eth_driver->mac;
     esp_eth_phy_t *phy = eth_driver->phy;
-    ESP_LOGD(TAG, "deinit 1\n");
     ESP_GOTO_ON_ERROR(esp_timer_delete(eth_driver->check_link_timer), err, TAG, "delete link timer failed");
-    ESP_LOGD(TAG, "deinit 2\n");
     ESP_GOTO_ON_ERROR(phy->deinit(phy), err, TAG, "deinit phy failed");
-    ESP_LOGD(TAG, "deinit 3\n");
     ESP_GOTO_ON_ERROR(mac->deinit(mac), err, TAG, "deinit mac failed");
     free(eth_driver);
 err:

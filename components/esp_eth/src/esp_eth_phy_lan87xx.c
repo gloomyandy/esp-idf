@@ -17,6 +17,8 @@
 #include "esp_rom_gpio.h"
 #include "esp_rom_sys.h"
 
+#define RRF_ETHERNET 1
+
 static const char *TAG = "lan87xx";
 
 /***************List of Supported Models***************/
@@ -234,16 +236,7 @@ static esp_err_t lan87xx_update_link_duplex_speed(phy_lan87xx_t *lan87xx)
     anlpar_reg_t anlpar;
     ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, lan87xx->addr, ETH_PHY_ANLPAR_REG_ADDR, &(anlpar.val)), err, TAG, "read ANLPAR failed");
     ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, lan87xx->addr, ETH_PHY_BMSR_REG_ADDR, &(bmsr.val)), err, TAG, "read BMSR failed");
-    ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, lan87xx->addr, ETH_PHY_BMSR_REG_ADDR, &(bmsr.val)), err, TAG, "read BMSR failed");
     eth_link_t link = bmsr.link_status ? ETH_LINK_UP : ETH_LINK_DOWN;
-    ESP_LOGD(TAG, "Check link reg %x old %d new %d\n", bmsr.val, lan87xx->link_status, link);
-    if (link != lan87xx->link_status)
-    {
-        vTaskDelay(pdMS_TO_TICKS(100));
-        ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, lan87xx->addr, ETH_PHY_BMSR_REG_ADDR, &(bmsr.val)), err, TAG, "read BMSR failed");
-        link = bmsr.link_status ? ETH_LINK_UP : ETH_LINK_DOWN;
-        ESP_LOGD(TAG, "recheck link reg %x old %d new %d\n", bmsr.val, lan87xx->link_status, link);
-    }
 
     /* check if link status changed */
     if (lan87xx->link_status != link) {
@@ -270,8 +263,6 @@ static esp_err_t lan87xx_update_link_duplex_speed(phy_lan87xx_t *lan87xx)
             default:
                 break;
             }
-            ESP_LOGD(TAG, "Setting speed to %x\n", speed);
-            ESP_LOGD(TAG, "Setting duplex %x\n", duplex);
             ESP_GOTO_ON_ERROR(eth->on_state_changed(eth, ETH_STATE_SPEED, (void *)speed), err, TAG, "change speed failed");
             ESP_GOTO_ON_ERROR(eth->on_state_changed(eth, ETH_STATE_DUPLEX, (void *)duplex), err, TAG, "change duplex failed");
             /* if we're in duplex mode, and peer has the flow control ability */
@@ -349,6 +340,24 @@ static esp_err_t lan87xx_reset_hw(esp_eth_phy_t *phy)
     return ESP_OK;
 }
 
+#if RRF_ETHERNET
+#if 0
+// debug function
+static esp_err_t dumpRegisters(esp_eth_mediator_t *eth, phy_lan87xx_t *lan87xx)
+{
+    esp_err_t ret = ESP_OK;
+    for(int reg = 0; reg < 32; reg++)
+    {
+        phyidr1_reg_t id1;
+        ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, lan87xx->addr, reg, &(id1.val)), err, TAG, "read ID1 failed");
+        ESP_LOGD(TAG, "reg %x value %x\n", reg, id1.val);       
+    }
+err:
+    return ret;
+}
+#endif
+#endif
+
 /**
  * @note This function is responsible for restarting a new auto-negotiation,
  *       the result of negotiation won't be relected to uppler layers.
@@ -356,17 +365,21 @@ static esp_err_t lan87xx_reset_hw(esp_eth_phy_t *phy)
  */
 static esp_err_t lan87xx_negotiate(esp_eth_phy_t *phy)
 {
-ESP_LOGD(TAG, "lan87xx negotiate\n");
     esp_err_t ret = ESP_OK;
     phy_lan87xx_t *lan87xx = __containerof(phy, phy_lan87xx_t, parent);
     esp_eth_mediator_t *eth = lan87xx->eth;
     /* in case any link status has changed, let's assume we're in link down status */
     lan87xx->link_status = ETH_LINK_DOWN;
+#if RRF_ETHERNET
+    // We have already configured the operating mode, so nothing to do here
+    return ESP_OK;
+#endif
+
     /* Restart auto negotiation */
     bmcr_reg_t bmcr = {
         .speed_select = 1,     /* 100Mbps */
         .duplex_mode = 1,      /* Full Duplex */
-        .en_auto_nego = 0,     /* Auto Negotiation */
+        .en_auto_nego = 1,     /* Auto Negotiation */
         .restart_auto_nego = 1 /* Restart Auto Negotiation */
     };
     ESP_GOTO_ON_ERROR(eth->phy_reg_write(eth, lan87xx->addr, ETH_PHY_BMCR_REG_ADDR, bmcr.val), err, TAG, "write BMCR failed");
@@ -386,6 +399,7 @@ ESP_LOGD(TAG, "lan87xx negotiate\n");
     if (to >= lan87xx->autonego_timeout_ms / 100 && (lan87xx->link_status == ETH_LINK_UP)) {
         ESP_LOGW(TAG, "auto negotiation timeout");
     }
+
     return ESP_OK;
 err:
     return ret;
@@ -491,22 +505,13 @@ err:
     return ret;
 }
 
-static esp_err_t dumpRegisters(esp_eth_mediator_t *eth, phy_lan87xx_t *lan87xx)
-{
-    esp_err_t ret = ESP_OK;
-    for(int reg = 0; reg < 32; reg++)
-    {
-        phyidr1_reg_t id1;
-        ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, lan87xx->addr, reg, &(id1.val)), err, TAG, "read ID1 failed");
-        ESP_LOGD(TAG, "reg %x value %x\n", reg, id1.val);       
-    }
-err:
-    return ret;
-}
+#if RRF_ETHERNET
+// Allow operating mode to be set, default to "auto"
+uint32_t lan87xxOperatingMode = 0b001;
+#endif
 
 static esp_err_t lan87xx_init(esp_eth_phy_t *phy)
 {
-    ESP_LOGD(TAG, "init lan87xx\n");
     esp_err_t ret = ESP_OK;
     phy_lan87xx_t *lan87xx = __containerof(phy, phy_lan87xx_t, parent);
     esp_eth_mediator_t *eth = lan87xx->eth;
@@ -514,23 +519,20 @@ static esp_err_t lan87xx_init(esp_eth_phy_t *phy)
     if (lan87xx->addr == ESP_ETH_PHY_ADDR_AUTO) {
         ESP_GOTO_ON_ERROR(esp_eth_detect_phy_addr(eth, &lan87xx->addr), err, TAG, "Detect PHY address failed");
     }
-    dumpRegisters(eth, lan87xx);
-    ESP_GOTO_ON_ERROR(lan87xx_reset(phy), err, TAG, "reset failed");
-    ESP_LOGD(TAG, "lan87xx reset\n");
-    vTaskDelay(pdMS_TO_TICKS(5000));
-    // power the module off and then back on again
-    ESP_GOTO_ON_ERROR(lan87xx_pwrctl(phy, false), err, TAG, "power control off failed");
-    ESP_LOGD(TAG, "lan87xx power off\n");
-    vTaskDelay(pdMS_TO_TICKS(5000));
+#if RRF_ETHERNET
+    smr_reg_t smr;
+    ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, lan87xx->addr, ETH_PHY_SMR_REG_ADDR, &(smr.val)), err, TAG, "read SMR failed");
+    smr.mode = lan87xxOperatingMode;
+    smr.reserved_1 = 0;
+    smr.reserved_2 = 0;
+    smr.mii_mode = 1;
+    ESP_GOTO_ON_ERROR(eth->phy_reg_write(eth, lan87xx->addr, ETH_PHY_SMR_REG_ADDR, smr.val), err, TAG, "write SMR failed");
+#endif
     /* Power on Ethernet PHY */
     ESP_GOTO_ON_ERROR(lan87xx_pwrctl(phy, true), err, TAG, "power control failed");
     ESP_LOGD(TAG, "lan87xx power on\n");
-    vTaskDelay(pdMS_TO_TICKS(5000));
     /* Reset Ethernet PHY */
     ESP_GOTO_ON_ERROR(lan87xx_reset(phy), err, TAG, "reset failed");
-    ESP_LOGD(TAG, "lan87xx power reset\n");
-    vTaskDelay(pdMS_TO_TICKS(5000));
-    dumpRegisters(eth, lan87xx);
     /* Check PHY ID */
     phyidr1_reg_t id1;
     phyidr2_reg_t id2;
