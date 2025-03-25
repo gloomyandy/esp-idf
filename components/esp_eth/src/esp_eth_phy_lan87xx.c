@@ -18,6 +18,11 @@
 #include "esp_rom_sys.h"
 
 #define RRF_ETHERNET 1
+#if RRF_ETHERNET
+// Allow operating mode to be set, default to "auto"
+uint32_t lan87xxOperatingMode = 0b001;
+#endif
+
 
 static const char *TAG = "lan87xx";
 
@@ -371,8 +376,12 @@ static esp_err_t lan87xx_negotiate(esp_eth_phy_t *phy)
     /* in case any link status has changed, let's assume we're in link down status */
     lan87xx->link_status = ETH_LINK_DOWN;
 #if RRF_ETHERNET
-    // We have already configured the operating mode, so nothing to do here
-    return ESP_OK;
+    if (lan87xxOperatingMode != 0b111)
+    {
+        // negotiation is disabled
+        return ESP_OK;
+    }
+    ESP_LOGD(TAG, "Starting negotiation\n");
 #endif
 
     /* Restart auto negotiation */
@@ -505,11 +514,6 @@ err:
     return ret;
 }
 
-#if RRF_ETHERNET
-// Allow operating mode to be set, default to "auto"
-uint32_t lan87xxOperatingMode = 0b001;
-#endif
-
 static esp_err_t lan87xx_init(esp_eth_phy_t *phy)
 {
     esp_err_t ret = ESP_OK;
@@ -522,17 +526,27 @@ static esp_err_t lan87xx_init(esp_eth_phy_t *phy)
 #if RRF_ETHERNET
     smr_reg_t smr;
     ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, lan87xx->addr, ETH_PHY_SMR_REG_ADDR, &(smr.val)), err, TAG, "read SMR failed");
-    smr.mode = lan87xxOperatingMode;
-    smr.reserved_1 = 0;
-    smr.reserved_2 = 0;
-    smr.mii_mode = 1;
-    ESP_GOTO_ON_ERROR(eth->phy_reg_write(eth, lan87xx->addr, ETH_PHY_SMR_REG_ADDR, smr.val), err, TAG, "write SMR failed");
-#endif
+    if (smr.mode != lan87xxOperatingMode)
+    {
+        ESP_LOGD(TAG, "Operating mode %x requested %x\n", smr.mode, lan87xxOperatingMode);
+        smr.mode = lan87xxOperatingMode;
+        smr.reserved_1 = 0;
+        smr.reserved_2 = 0;
+        smr.mii_mode = 1;
+        ESP_GOTO_ON_ERROR(eth->phy_reg_write(eth, lan87xx->addr, ETH_PHY_SMR_REG_ADDR, smr.val), err, TAG, "write SMR failed");
+        /* Power on Ethernet PHY */
+        ESP_GOTO_ON_ERROR(lan87xx_pwrctl(phy, true), err, TAG, "power control failed");
+        ESP_LOGD(TAG, "lan87xx power on\n");
+        /* Reset Ethernet PHY */
+        ESP_GOTO_ON_ERROR(lan87xx_reset(phy), err, TAG, "reset failed");
+    }
+#else
     /* Power on Ethernet PHY */
     ESP_GOTO_ON_ERROR(lan87xx_pwrctl(phy, true), err, TAG, "power control failed");
     ESP_LOGD(TAG, "lan87xx power on\n");
     /* Reset Ethernet PHY */
     ESP_GOTO_ON_ERROR(lan87xx_reset(phy), err, TAG, "reset failed");
+#endif
     /* Check PHY ID */
     phyidr1_reg_t id1;
     phyidr2_reg_t id2;
