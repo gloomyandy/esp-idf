@@ -524,29 +524,22 @@ static esp_err_t lan87xx_init(esp_eth_phy_t *phy)
         ESP_GOTO_ON_ERROR(esp_eth_detect_phy_addr(eth, &lan87xx->addr), err, TAG, "Detect PHY address failed");
     }
 #if RRF_ETHERNET
+    // Set link configuration
     smr_reg_t smr;
     ESP_GOTO_ON_ERROR(eth->phy_reg_read(eth, lan87xx->addr, ETH_PHY_SMR_REG_ADDR, &(smr.val)), err, TAG, "read SMR failed");
-    if (smr.mode != lan87xxOperatingMode)
-    {
-        ESP_LOGD(TAG, "Operating mode %x requested %x\n", smr.mode, lan87xxOperatingMode);
-        smr.mode = lan87xxOperatingMode;
-        smr.reserved_1 = 0;
-        smr.reserved_2 = 0;
-        smr.mii_mode = 1;
-        ESP_GOTO_ON_ERROR(eth->phy_reg_write(eth, lan87xx->addr, ETH_PHY_SMR_REG_ADDR, smr.val), err, TAG, "write SMR failed");
-        /* Power on Ethernet PHY */
-        ESP_GOTO_ON_ERROR(lan87xx_pwrctl(phy, true), err, TAG, "power control failed");
-        ESP_LOGD(TAG, "lan87xx power on\n");
-        /* Reset Ethernet PHY */
-        ESP_GOTO_ON_ERROR(lan87xx_reset(phy), err, TAG, "reset failed");
-    }
-#else
+
+    ESP_LOGD(TAG, "Operating mode %x requested %x\n", smr.mode, lan87xxOperatingMode);
+    smr.mode = lan87xxOperatingMode;
+    smr.reserved_1 = 0;
+    smr.reserved_2 = 0;
+    smr.mii_mode = 1;
+    ESP_GOTO_ON_ERROR(eth->phy_reg_write(eth, lan87xx->addr, ETH_PHY_SMR_REG_ADDR, smr.val), err, TAG, "write SMR failed");
+#endif
     /* Power on Ethernet PHY */
     ESP_GOTO_ON_ERROR(lan87xx_pwrctl(phy, true), err, TAG, "power control failed");
     ESP_LOGD(TAG, "lan87xx power on\n");
     /* Reset Ethernet PHY */
     ESP_GOTO_ON_ERROR(lan87xx_reset(phy), err, TAG, "reset failed");
-#endif
     /* Check PHY ID */
     phyidr1_reg_t id1;
     phyidr2_reg_t id2;
